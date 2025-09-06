@@ -214,8 +214,8 @@ def batch_load_signals(path, case, segments):
 
 def load_model_without_module_prefix(model, checkpoint_path):
     # Load the checkpoint
-    checkpoint = torch.load(checkpoint_path)
-    
+    checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
+
     # Create a new state_dict with the `module.` prefix removed
     new_state_dict = {}
     for k, v in checkpoint.items():

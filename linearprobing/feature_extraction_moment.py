@@ -37,7 +37,7 @@ def compute_signal_embeddings(model, path, case, batch_size, device, average=Tru
         for i in range(0, len(segments), batch_size):
             batch_signal = batch_load_signals(path, case, segments[i:i+batch_size])
             batch_signal = torch.Tensor(batch_signal).unsqueeze(dim=1).to(device)
-            embeddings.append(model(batch_signal).embeddings.cpu().detach().numpy())
+            embeddings.append(model(batch_signal).emb_orig.cpu().detach().numpy())
 
     embeddings = np.vstack(embeddings)
     return embeddings
@@ -70,7 +70,7 @@ def compute_signal_embeddings_df(model, path, case, segments, batch_size, device
         for i in range(0, len(segments), batch_size):
             batch_signal = batch_load_signals(path, case, segments[i:i+batch_size])
             batch_signal = torch.Tensor(batch_signal).unsqueeze(dim=1).to(device)
-            embeddings.append(model(batch_signal).embeddings.cpu().detach().numpy())
+            embeddings.append(model(batch_signal).emb_orig.cpu().detach().numpy())
 
     embeddings = np.vstack(embeddings)
     return embeddings

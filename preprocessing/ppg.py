@@ -65,17 +65,12 @@ def preprocess_one_ppg_signal(waveform,
 
     """
 
-    prep = PP.Preprocess(fL=fL,
-                    fH=fH,
-                    order=order,
-                    sm_wins=smoothing_windows)
-    
     signal = DotMap()
     signal.v = waveform
     signal.fs = frequency
     signal.filtering = True
 
-    ppg, ppg_d1, ppg_d2, ppg_d3 = prep.get_signals(signal)
+    ppg, ppg_d1, ppg_d2, ppg_d3 = PP.Preprocessing(signal, filtering=True)
 
     return ppg, ppg_d1, ppg_d2, ppg_d3
 
