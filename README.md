@@ -15,7 +15,7 @@
     ```
     *Note: This might show a `wfdb` package conflict, but it should still function correctly.*
 
-### Compressed Conclusion
+### Compression Conclusion
 
 See https://docs.google.com/document/d/1smgw1gmU6J4abKpT5WMU8zyWvBMdjTzzBX6X7KTlM7Y/edit?usp=sharing.
 
