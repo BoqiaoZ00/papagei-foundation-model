@@ -10,6 +10,30 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 
 
+from biobss.sqatools import detect_flatline_segments
+from torch_ecg._preprocessors import Normalize
+
+def is_signal_flat(sig, fs, flat_time=2, flat_threshold=0.25, change_threshold=0.01):
+    """
+    Check if a PPG segment is mostly flatlined.
+    """
+    flat_segment_length = fs * flat_time
+    norm = Normalize(method='z-score')
+    norm_sig = norm(sig, fs=fs)[0]
+
+    flatline_segments = detect_flatline_segments(
+        sig,
+        change_threshold=change_threshold,
+        min_duration=flat_segment_length
+    )
+
+    total_flat = sum(end - start for start, end in flatline_segments)
+
+    if total_flat / len(sig) > flat_threshold:
+        return True
+    return False
+
+
 # ---------- 1. Embedding space consistency ----------
 
 def evaluate_embedding_consistency(emb_orig, emb_compressed):
@@ -56,7 +80,6 @@ class SimpleDecoder(torch.nn.Module):
     def forward(self, x):
         return self.decoder(x)
 
-
 def evaluate_signal_reconstruction(embeddings, embeddings_comp, signal_tensor, device="cpu"):
     """
     embeddings: 原始模型 embedding (N, D)
@@ -75,7 +98,7 @@ def evaluate_signal_reconstruction(embeddings, embeddings_comp, signal_tensor, d
     Y = signal_tensor.squeeze(1).to(device)  # (N, L)
 
     decoder.train()
-    for _ in range(200):  # small training epochs
+    for _ in range(50):  # small training epochs
         optimizer.zero_grad()
         pred = decoder(X)
         loss = loss_fn(pred, Y)
@@ -166,8 +189,8 @@ def test_reconstruction_decoder(emb_orig, emb_comp, signal_tensor, device="cpu")
                 val_pred = decoder(X_val_t)
                 val_loss = loss_fn(val_pred, Y_val_t).item()
 
-            if verbose and (ep % 10 == 0 or ep == epochs - 1):
-                print(f"ep {ep:03d} train_loss={epoch_loss:.6f} val_loss={val_loss:.6f}")
+            # if verbose and (ep % 10 == 0 or ep == epochs - 1):
+            #     print(f"ep {ep:03d} train_loss={epoch_loss:.6f} val_loss={val_loss:.6f}")
 
             if val_loss < best_val - 1e-8:
                 best_val = val_loss
@@ -273,17 +296,89 @@ def test_reconstruction_decoder(emb_orig, emb_comp, signal_tensor, device="cpu")
     print("dec_mix on comp:", m_mix_on_comp[:2])
 
     # Optional: visualize one test sample reconstructions
-    i = 0
-    _, _, rec_orig = evaluate_decoder(dec_orig, X_orig_test[:1], Y_test[:1])
-    _, _, rec_comp = evaluate_decoder(dec_comp, X_comp_test[:1], Y_test[:1])
-    _, _, rec_mix_o = evaluate_decoder(dec_mix, X_orig_test[:1], Y_test[:1])
-    _, _, rec_mix_c = evaluate_decoder(dec_mix, X_comp_test[:1], Y_test[:1])
+    # ---- Plot 5 samples with original and both reconstructions ----
+    num_samples = min(5, len(Y_test))
 
-    true = Y_test[:1][0]
-    plt.figure(figsize=(10, 4))
-    plt.plot(true, label='true')
-    plt.plot(rec_orig[0], label='rec_orig')
-    plt.plot(rec_comp[0], label='rec_comp')
-    plt.plot(rec_mix_c[0], label='rec_mix_comp')
-    plt.legend();
+    # Get reconstructions for all test samples
+    _, _, rec_orig_all = evaluate_decoder(dec_orig, X_orig_test, Y_test)
+    _, _, rec_comp_all = evaluate_decoder(dec_comp, X_comp_test, Y_test)
+
+    # Create subplots
+    fig, axes = plt.subplots(num_samples, 1, figsize=(12, 3 * num_samples))
+    if num_samples == 1:
+        axes = [axes]  # Make it iterable
+
+    for i in range(num_samples):
+        true_signal = Y_test[i]
+        rec_orig_signal = rec_orig_all[i]
+        rec_comp_signal = rec_comp_all[i]
+
+        axes[i].plot(true_signal, label='Original Signal', color='black', linewidth=2, alpha=0.8)
+        axes[i].plot(rec_orig_signal, label='Reconstruction (Original Emb)', color='blue', linewidth=1.5, alpha=0.7)
+        axes[i].plot(rec_comp_signal, label='Reconstruction (Compressed Emb)', color='red', linewidth=1.5, alpha=0.7)
+
+        axes[i].set_title(f'Sample {i + 1} - Signal Reconstruction Comparison')
+        axes[i].set_xlabel('Time Steps')
+        axes[i].set_ylabel('Amplitude')
+        axes[i].legend()
+        axes[i].grid(True, alpha=0.3)
+    plt.tight_layout()
     plt.show()
+
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, f1_score
+from sklearn.model_selection import train_test_split
+
+def linear_probe(model, signal_tensor, labels, device):
+    """Run linear probing with logistic regression"""
+    model.to(device).eval()
+
+    # Extract embeddings
+    with torch.no_grad():
+        embeddings = model(signal_tensor.to(device))[0].cpu().numpy()
+
+    # Train/test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        embeddings, labels, test_size=0.8, random_state=42, stratify=labels
+    )
+
+    # Logistic regression probe
+    clf = LogisticRegression(max_iter=100)
+    clf.fit(X_train, y_train)
+
+    # Evaluate
+    y_pred = clf.predict(X_test)
+    acc = accuracy_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred, average="macro")
+
+    return {"linear_probe_acc": acc, "linear_probe_f1": f1}
+
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
+
+def evaluate_knn(embeddings, labels, k=5, test_size=0.2, random_state=42):
+    """
+    Evaluate embeddings using a simple KNN classifier.
+    embeddings: np.ndarray of shape (n_samples, embedding_dim)
+    labels: list/array of ground-truth labels
+    """
+    # Train-test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        embeddings, labels, test_size=test_size, random_state=random_state, stratify=labels
+    )
+
+    # Train KNN
+    knn = KNeighborsClassifier(n_neighbors=k)
+    knn.fit(X_train, y_train)
+
+    # Predict
+    y_pred = knn.predict(X_test)
+
+    # Accuracy
+    acc = accuracy_score(y_test, y_pred)
+
+    print(f"KNN (k={k}) accuracy: {acc:.4f}")
+    return {"knn_acc": acc}
+
